@@ -38,11 +38,17 @@ room_messages = defaultdict(list)
 room_clients = defaultdict(list)
 clients_lock = threading.Lock()
 
+# Valid room IDs
+VALID_ROOMS = ["room1a2b3c", "room2d4e5f"]
+
 # Define API models for Swagger documentation
 room_model = api.model('Room', {
     'id': fields.String(required=True, description='Unique alphanumeric room identifier', example='room1a2b3c'),
     'name': fields.String(required=True, description='Display name of the room', example='Chelsea vs Barca'),
     'description': fields.String(required=True, description='Brief description of the room', example='Live discussion for Chelsea vs Barcelona match'),
+    'league': fields.String(required=True, description='Football league or competition', example='Champions League'),
+    'kickoff_time': fields.String(required=True, description='Match kickoff time in ISO format', example='2025-10-18T20:00:00Z'),
+    'stadium': fields.String(required=True, description='Stadium where the match is being played', example='Stamford Bridge'),
     'created_at': fields.String(required=True, description='ISO timestamp when room was created', example='2025-10-16T12:00:00Z'),
     'active_users': fields.Integer(required=True, description='Number of currently active users', example=0)
 })
@@ -85,7 +91,8 @@ message_model = api.model('Message', {
     'user_name': fields.String(description='Name of the user who sent the message', example='John Doe'),
     'message': fields.String(description='Message content', example='Hello everyone!'),
     'timestamp': fields.String(description='ISO timestamp when message was sent', example='2025-10-16T18:30:00.000Z'),
-    'room_id': fields.String(description='ID of the room where message was sent', example='room1a2b3c')
+    'room_id': fields.String(description='ID of the room where message was sent', example='room1a2b3c'),
+    'connected_clients': fields.Integer(description='Number of clients connected to the room when message was sent', example=3)
 })
 
 send_message_response_model = api.model('SendMessageResponse', {
@@ -140,8 +147,21 @@ class RoomsList(Resource):
                 "id": "room1a2b3c",
                 "name": "Chelsea vs Barca",
                 "description": "Live discussion for Chelsea vs Barcelona match",
+                "league": "Champions League",
+                "kickoff_time": "2025-10-18T20:00:00Z",
+                "stadium": "Stamford Bridge",
                 "created_at": "2025-10-16T12:00:00Z",
-                "active_users": 0
+                "active_users": len(room_clients.get("room1a2b3c", []))
+            },
+            {
+                "id": "room2d4e5f",
+                "name": "Arsenal vs Liverpool",
+                "description": "Live discussion for Arsenal vs Liverpool match",
+                "league": "Premier League",
+                "kickoff_time": "2025-10-19T15:30:00Z",
+                "stadium": "Emirates Stadium",
+                "created_at": "2025-10-17T15:00:00Z",
+                "active_users": len(room_clients.get("room2d4e5f", []))
             }
         ]
         return {
@@ -189,8 +209,8 @@ class JoinRoom(Resource):
                     "data": None
                 }, 400
             
-            # Check if room exists (for now, we'll accept the hardcoded room)
-            if room_id != "room1a2b3c":
+            # Check if room exists
+            if room_id not in VALID_ROOMS:
                 return {
                     "status": 404,
                     "success": False,
@@ -256,13 +276,17 @@ class SendMessage(Resource):
                 }, 400
             
             # Check if room exists
-            if room_id != "room1a2b3c":
+            if room_id not in VALID_ROOMS:
                 return {
                     "status": 404,
                     "success": False,
                     "message": "Room not found",
                     "data": None
                 }, 404
+            
+            # Get current number of connected clients
+            with clients_lock:
+                connected_clients = len(room_clients[room_id])
             
             # Create message object
             message = {
@@ -271,7 +295,8 @@ class SendMessage(Resource):
                 "user_name": user_name,
                 "message": message_content,
                 "timestamp": datetime.now().isoformat(),
-                "room_id": room_id
+                "room_id": room_id,
+                "connected_clients": connected_clients
             }
             
             # Store message
@@ -329,7 +354,8 @@ def stream_messages(room_id):
         "user_name": "John Doe",
         "message": "Hello everyone!",
         "timestamp": "2025-10-16T18:30:00.000Z",
-        "room_id": "room1a2b3c"
+        "room_id": "room1a2b3c",
+        "connected_clients": 3
     }
     
     **Parameters:**
@@ -376,7 +402,7 @@ def stream_messages(room_id):
                     room_clients[room_id].remove(client_queue)
     
     # Check if room exists
-    if room_id != "room1a2b3c":
+    if room_id not in VALID_ROOMS:
         return jsonify({
             "status": 404,
             "success": False,
